@@ -21,9 +21,20 @@ const uint8_t sck_pin = 9 - 1;
 const uint16_t csn_pin = 8 - 1; // chip select
 const uint16_t ce_pin = 7 - 1;
 
-#define SAMP_RATE AUDIO_SR_16K
+#define SAMP_RATE AUDIO_SR_32K
 #define LUT_N 1024
 float LUT[LUT_N];
+
+enum sample_types
+{
+	float32 = 0,
+	int32,
+	int16
+};
+
+// make sure these match
+#define SAMP_TYPE int16_t
+const sample_types samp_type = int16;
 
 // instantiate an object for the nRF24L01 transceiver
 // RF24 radio(7, 8); // using pin 7 for the CE pin, and pin 8 for the CSN pin
@@ -40,18 +51,18 @@ bool radioNumber = 1; // 0 uses address[0] to transmit, 1 uses address[1] to tra
 
 // Used to control whether this node is sending or receiving
 bool role = false; // true = TX role, false = RX role
-
 // For this example, we'll be using a payload containing
 // a single float number that will be incremented
 // on every successful transmission
 // float payload[8] = {0};
-int32_t payload[8] = {0};
 
 #define SAMPS_PER_BUF int(48)
 #define N_BUFS int(6)
 #define TOTAL_SAMPS int(N_BUFS * SAMPS_PER_BUF)
-// float audio_buffer[SAMPS_PER_BUF * N_BUFS] = {0};
-int32_t audio_buffer[SAMPS_PER_BUF * N_BUFS] = {0};
+
+SAMP_TYPE audio_buffer[SAMPS_PER_BUF * N_BUFS] = {0};
+SAMP_TYPE payload[32 / sizeof(SAMP_TYPE)] = {0};
+
 volatile int read_idx = 0;
 volatile int write_idx = 0;
 volatile int available_samps = 0;
@@ -86,7 +97,18 @@ void MyCallback(float **in, float **out, size_t size)
 			{
 				// out[chn][i] = x;
 				// out[chn][i] = audio_buffer[read_idx];
-				out[chn][i] = float(audio_buffer[read_idx]) * (1.f / 2147483647.f);
+				switch (samp_type)
+				{
+				case float32:
+					out[chn][i] = audio_buffer[read_idx];
+					break;
+				case int32:
+					out[chn][i] = float(audio_buffer[read_idx]) * (1.f / 2147483648.f);
+					break;
+				case int16:
+					out[chn][i] = float(audio_buffer[read_idx]) * (1.f / 32768.f);
+					break;
+				}
 				// out[chn][i] = payload[idx];
 			}
 			read_idx++;
@@ -119,10 +141,10 @@ void setup()
 	hw = DAISY.init(DAISY_SEED, SAMP_RATE);
 	DAISY.SetAudioBlockSize(SAMPS_PER_BUF);
 	num_channels = hw.num_channels;
-	for (int i = 0; i < 8; i++)
-	{
-		payload[i] = 0;
-	}
+	// for (int i = 0; i < 8; i++)
+	// {
+	// 	payload[i] = 0;
+	// }
 	const int led = LED_BUILTIN;
 	pinMode(led, OUTPUT);
 
@@ -242,10 +264,10 @@ void loop()
 			// Serial.print(F("Time to transmit = "));
 			// Serial.print(end_timer - start_timer); // print the timer result
 			Serial.print(F(" us. Sent: "));
-			for (int i = 0; i < 8; i++)
-			{
-				payload[i] += 0.01; // increment float payload
-			}
+			// for (int i = 0; i < 8; i++)
+			// {
+			// 	payload[i] += 0.01; // increment float payload
+			// }
 			Serial.println();
 		}
 		else
