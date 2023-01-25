@@ -60,8 +60,8 @@ bool role = false; // true = TX role, false = RX role
 // float payload[8] = {0};
 const float int16_factor = (1.f / 32767.f);
 
-#define SAMPS_PER_BUF SAMPS_PER_PAYLOAD
-#define N_BUFS int(16)
+#define SAMPS_PER_BUF SAMPS_PER_PAYLOAD * 2
+#define N_BUFS int(2100)
 #define TOTAL_SAMPS int(N_BUFS * SAMPS_PER_BUF)
 
 SAMP_TYPE audio_buffer[SAMPS_PER_BUF * N_BUFS] = {0};
@@ -82,15 +82,19 @@ volatile bool overun = false;
 bool listening_paused = false;
 
 volatile int callback_state = LOW;
+volatile bool enough_samples = false;
 
 void MyCallback(float **in, float **out, size_t size)
 {
 	digitalWrite(2, callback_state);
 	callback_state = (callback_state == HIGH) ? LOW : HIGH;
-	float amp = 0.1f;
+	float amp = 0.9f;
 	// Serial.print("size: ");
 	// Serial.println(size);
-	if (available_samps >= (SAMPS_PER_BUF)) // we want 1 buffer available
+	if (available_samps >= (2000 * SAMPS_PER_BUF)) // we want 1 buffer available
+		enough_samples = true;
+
+	if (enough_samples && (available_samps >= SAMPS_PER_BUF)) // we want 1 buffer available
 	{
 		overun = false;
 
@@ -157,6 +161,7 @@ void MyCallback(float **in, float **out, size_t size)
 
 					// out[chn][i] = payload[idx];
 					out[chn][i] = amp * float(audio_buffer[read_idx]) * int16_factor;
+					// out[chn][i] = amp * float(payload[i]) * int16_factor;
 				}
 				read_idx++;
 
@@ -193,6 +198,7 @@ void MyCallback(float **in, float **out, size_t size)
 	}
 	else
 	{
+		enough_samples = false;
 		// Serial.println("OVERUN :(");
 		overun = true;
 		for (size_t i = 0; i < SAMPS_PER_BUF; i++)
