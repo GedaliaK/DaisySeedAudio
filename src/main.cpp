@@ -22,6 +22,7 @@ const uint16_t csn_pin = 8 - 1; // chip select
 const uint16_t ce_pin = 7 - 1;
 
 #define SAMP_RATE AUDIO_SR_32K
+#define SAMP_RATE_HZ 32000.f
 #define LUT_N 1024
 float LUT[LUT_N];
 
@@ -29,16 +30,18 @@ enum sample_types
 {
 	float32 = 0,
 	int32,
-	int16
+	int16,
+	int8
 };
 
 // make sure these match
 #define SAMP_TYPE int16_t
 const sample_types samp_type = int16;
+#define SAMPS_PER_PAYLOAD int(32 / sizeof(SAMP_TYPE))
 
 // instantiate an object for the nRF24L01 transceiver
 // RF24 radio(7, 8); // using pin 7 for the CE pin, and pin 8 for the CSN pin
-RF24 radio(ce_pin, csn_pin, int(9e6)); // using pin 7 for the CE pin, and pin 8 for the CSN pin
+RF24 radio(ce_pin, csn_pin, int(20e6)); // using pin 7 for the CE pin, and pin 8 for the CSN pin
 
 // Let these addresses be used for the pair
 uint8_t address[][6] = {"1Node", "2Node"};
@@ -55,13 +58,14 @@ bool role = false; // true = TX role, false = RX role
 // a single float number that will be incremented
 // on every successful transmission
 // float payload[8] = {0};
+const float int16_factor = (1.f / 32767.f);
 
-#define SAMPS_PER_BUF int(48)
-#define N_BUFS int(6)
+#define SAMPS_PER_BUF SAMPS_PER_PAYLOAD
+#define N_BUFS int(16)
 #define TOTAL_SAMPS int(N_BUFS * SAMPS_PER_BUF)
 
 SAMP_TYPE audio_buffer[SAMPS_PER_BUF * N_BUFS] = {0};
-SAMP_TYPE payload[32 / sizeof(SAMP_TYPE)] = {0};
+SAMP_TYPE payload[SAMPS_PER_PAYLOAD] = {0};
 
 volatile int read_idx = 0;
 volatile int write_idx = 0;
@@ -77,56 +81,125 @@ int sine_idx = 0;
 volatile bool overun = false;
 bool listening_paused = false;
 
+volatile int callback_state = LOW;
+
 void MyCallback(float **in, float **out, size_t size)
 {
-
+	digitalWrite(2, callback_state);
+	callback_state = (callback_state == HIGH) ? LOW : HIGH;
+	float amp = 0.1f;
 	// Serial.print("size: ");
 	// Serial.println(size);
-	if (available_samps >= (2 * SAMPS_PER_BUF)) // we want 1 buffer available
+	if (available_samps >= (SAMPS_PER_BUF)) // we want 1 buffer available
 	{
 		overun = false;
 
-		for (size_t i = 0; i < SAMPS_PER_BUF; i++)
+		switch (samp_type)
 		{
-			// x = 0.75f * LUT[sine_idx]; // increment float payload
-			// sine_idx += sine_dx;
-			// if (sine_idx >= LUT_N)
-			// 	sine_idx %= LUT_N;
-
-			for (size_t chn = 0; chn < num_channels; chn++)
+		case float32:
+			for (size_t i = 0; i < SAMPS_PER_BUF; i++)
 			{
-				// out[chn][i] = x;
-				// out[chn][i] = audio_buffer[read_idx];
-				switch (samp_type)
-				{
-				case float32:
-					out[chn][i] = audio_buffer[read_idx];
-					break;
-				case int32:
-					out[chn][i] = float(audio_buffer[read_idx]) * (1.f / 2147483648.f);
-					break;
-				case int16:
-					out[chn][i] = float(audio_buffer[read_idx]) * (1.f / 32768.f);
-					break;
-				}
-				// out[chn][i] = payload[idx];
-			}
-			read_idx++;
+				// x = 0.75f * LUT[sine_idx]; // increment float payload
+				// sine_idx += sine_dx;
+				// if (sine_idx >= LUT_N)
+				// 	sine_idx %= LUT_N;
 
-			if (read_idx >= (TOTAL_SAMPS))
-				read_idx = 0;
-			available_samps--;
+				for (size_t chn = 0; chn < num_channels; chn++)
+				{
+					// out[chn][i] = x;
+					// out[chn][i] = audio_buffer[read_idx];
+
+					// out[chn][i] = payload[idx];
+					out[chn][i] = amp * audio_buffer[read_idx];
+				}
+				read_idx++;
+
+				if (read_idx >= (TOTAL_SAMPS))
+					read_idx = 0;
+				available_samps--;
+			}
+			break;
+		case int32:
+			for (size_t i = 0; i < SAMPS_PER_BUF; i++)
+			{
+				// x = 0.75f * LUT[sine_idx]; // increment float payload
+				// sine_idx += sine_dx;
+				// if (sine_idx >= LUT_N)
+				// 	sine_idx %= LUT_N;
+
+				for (size_t chn = 0; chn < num_channels; chn++)
+				{
+					// out[chn][i] = x;
+					// out[chn][i] = audio_buffer[read_idx];
+
+					// out[chn][i] = payload[idx];
+					out[chn][i] = amp * float(audio_buffer[read_idx]) * (1.f / 2147483647.f);
+				}
+				read_idx++;
+
+				if (read_idx >= (TOTAL_SAMPS))
+					read_idx = 0;
+				available_samps--;
+			}
+			break;
+		case int16:
+			for (size_t i = 0; i < SAMPS_PER_BUF; i++)
+			{
+				// x = 0.75f * LUT[sine_idx]; // increment float payload
+				// sine_idx += sine_dx;
+				// if (sine_idx >= LUT_N)
+				// 	sine_idx %= LUT_N;
+
+				for (size_t chn = 0; chn < num_channels; chn++)
+				{
+					// out[chn][i] = x;
+					// out[chn][i] = audio_buffer[read_idx];
+
+					// out[chn][i] = payload[idx];
+					out[chn][i] = amp * float(audio_buffer[read_idx]) * int16_factor;
+				}
+				read_idx++;
+
+				if (read_idx >= (TOTAL_SAMPS))
+					read_idx = 0;
+				available_samps--;
+			}
+			break;
+
+		case int8:
+			for (size_t i = 0; i < SAMPS_PER_BUF; i++)
+			{
+				// x = 0.75f * LUT[sine_idx]; // increment float payload
+				// sine_idx += sine_dx;
+				// if (sine_idx >= LUT_N)
+				// 	sine_idx %= LUT_N;
+
+				for (size_t chn = 0; chn < num_channels; chn++)
+				{
+					// out[chn][i] = x;
+					// out[chn][i] = audio_buffer[read_idx];
+
+					// out[chn][i] = payload[idx];
+					out[chn][i] = amp * float(audio_buffer[read_idx]) * (1.f / 127.f);
+				}
+				read_idx++;
+
+				if (read_idx >= (TOTAL_SAMPS))
+					read_idx = 0;
+				available_samps--;
+			}
+			break;
 		}
 	}
 	else
 	{
-		Serial.println("OVERUN :(");
+		// Serial.println("OVERUN :(");
 		overun = true;
-		for (size_t i = 0; i < size; i++)
+		for (size_t i = 0; i < SAMPS_PER_BUF; i++)
 		{
 			for (size_t chn = 0; chn < num_channels; chn++)
 			{
-				out[chn][i] = 0.f;
+				out[chn][i] = .0f;
 			}
 		}
 	}
@@ -147,6 +220,9 @@ void setup()
 	// }
 	const int led = LED_BUILTIN;
 	pinMode(led, OUTPUT);
+	pinMode(1, OUTPUT);
+	pinMode(2, OUTPUT);
+	digitalWrite(1, HIGH);
 
 	Serial.begin();
 	// while (!Serial)
@@ -192,7 +268,7 @@ void setup()
 	// Set the PA Level low to try preventing power supply related problems
 	// because these examples are likely run with nodes in close proximity to
 	// each other.
-	radio.setPALevel(RF24_PA_LOW, 1); // RF24_PA_MAX is default.
+	radio.setPALevel(RF24_PA_MAX, 1); // RF24_PA_MAX is default.
 
 	// save on transmission time by setting the radio to only transmit the
 	// number of bytes we need to transmit a float
@@ -245,9 +321,16 @@ void setup()
 
 } // setup
 
+int led_state = LOW;
+
+int last_read_us = micros();
+const int delay_time_us = float(32) / float(sizeof(SAMP_TYPE)) / SAMP_RATE_HZ * 1e6;
+
 void loop()
 {
-	digitalWrite(LED_BUILTIN, (overun) ? HIGH : LOW);
+	int t0 = micros();
+	// digitalWrite(LED_BUILTIN, (overun) ? HIGH : LOW);
+	// digitalWrite(1, (overun) ? HIGH : LOW);
 	// digitalWrite(LED_BUILTIN, (available_samps >= TOTAL_SAMPS) ? HIGH : LOW);
 
 	if (role)
@@ -284,10 +367,25 @@ void loop()
 		uint8_t pipe;
 
 		if (radio.available(&pipe))
-		{											// is there a payload? get the pipe number that recieved it
+		{ // is there a payload? get the pipe number that recieved it
+			// digitalWrite(1, led_state);
+			if ((t0 - last_read_us) > delay_time_us)
+			{
+				digitalWrite(LED_BUILTIN, HIGH);
+			}
+			else
+			{
+				digitalWrite(LED_BUILTIN, LOW);
+			}
+			last_read_us = t0;
+
+			led_state = (led_state == HIGH) ? LOW : HIGH;
 			uint8_t bytes = radio.getPayloadSize(); // get the size of the payload
-			// radio.read(&audio_buffer[write_idx], 32); // fetch payload from FIFO
-			radio.read(&payload, 32); // fetch payload from FIFO
+													// radio.read(&audio_buffer[write_idx], 32); // fetch payload from FIFO
+
+			digitalWrite(1, HIGH);
+			radio.read(&payload[0], 32); // fetch payload from FIFO
+			digitalWrite(1, LOW);
 			memcpy(&audio_buffer[write_idx], payload, 32);
 			// for (int k = 0; k < 8; k++)
 			// {
@@ -296,8 +394,8 @@ void loop()
 			// }
 			// Serial.println();
 
-			write_idx += 8;
-			available_samps += 8;
+			write_idx += SAMPS_PER_PAYLOAD;
+			available_samps += SAMPS_PER_PAYLOAD;
 			// if (available_samps >= TOTAL_SAMPS)
 			// {
 			// 	radio.stopListening();
