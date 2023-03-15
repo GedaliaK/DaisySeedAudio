@@ -38,7 +38,7 @@ enum sample_types
 #define SAMP_TYPE int16_t
 const sample_types samp_type = int16;
 #define SAMPS_PER_PAYLOAD int(32 / sizeof(SAMP_TYPE))
-SAMP_TYPE send_counter = 0;
+volatile SAMP_TYPE send_counter = 0;
 
 // instantiate an object for the nRF24L01 transceiver
 // RF24 radio(7, 8); // using pin 7 for the CE pin, and pin 8 for the CSN pin
@@ -50,7 +50,7 @@ uint8_t address[][6] = {"1Node", "2Node"};
 // an identifying device destination
 
 // Used to control whether this node is sending or receiving
-bool role = true; // true = TX role, false = RX role
+bool role = false; // true = TX role, false = RX role
 
 // to use different addresses on a pair of radios, we need a variable to
 // uniquely identify which address this radio will use to transmit
@@ -62,8 +62,8 @@ bool radioNumber = !role; // 0 uses address[0] to transmit, 1 uses address[1] to
 // float payload[8] = {0};
 const float int16_factor = (1.f / 32767.f);
 
-#define SAMPS_PER_BUF 64
-#define N_BUFS int(2)
+#define SAMPS_PER_BUF 32 // was 32
+#define N_BUFS int(4)
 #define TOTAL_SAMPS SAMPS_PER_BUF *N_BUFS
 
 float audio_buffer[TOTAL_SAMPS] = {0};
@@ -98,7 +98,8 @@ void MyCallback(float **in, float **out, size_t size)
     {
         for (size_t i = 0; i < size; i++)
         {
-            audio_in_buffer[audio_in_write_idx] = 0.5f * (in[0][i] + in[1][i]);
+            // audio_in_buffer[audio_in_write_idx] = 0.5f * (in[0][i] + in[1][i]);
+            audio_in_buffer[audio_in_write_idx] = in[0][i];
 
             audio_in_write_idx++;
 
@@ -133,19 +134,31 @@ void MyCallback(float **in, float **out, size_t size)
 
             for (size_t i = 0; i < size; i++)
             {
-                for (size_t chn = 0; chn < num_channels; chn++)
+                // for (size_t chn = 0; chn < num_channels; chn++)
+                // {
+                //     out[chn][i] = 0.9f * audio_buffer[read_idx];
+                //     // out[chn][i] = .1f * audio_buffer[read_idx] + 1.f * in[chn][i];
+                //     // out[chn][i] = in[chn][i];
+                // }
+                out[0][i] = 0;
+                out[1][i] = 0.9f * audio_buffer[read_idx];
+
+                // hacky? skip over samples if we have too many
+                if (available_samps >= TOTAL_SAMPS)
                 {
-                    out[chn][i] = 0.9f * audio_buffer[read_idx];
-                    // out[chn][i] = .1f * audio_buffer[read_idx] + 1.f * in[chn][i];
-                    // out[chn][i] = in[chn][i];
+                    read_idx += 2;
+                    available_samps -= 2;
                 }
-                read_idx++;
+                else
+                {
+                    read_idx++;
+                    available_samps--;
+                }
 
                 if (read_idx >= (TOTAL_SAMPS))
                 {
                     read_idx = 0;
                 }
-                available_samps--;
             }
 
             // switch (samp_type)
@@ -330,7 +343,7 @@ void setup()
     // Set the PA Level low to try preventing power supply related problems
     // because these examples are likely run with nodes in close proximity to
     // each other.
-    radio.setPALevel(RF24_PA_LOW, 0); // RF24_PA_MAX is default.
+    radio.setPALevel(RF24_PA_HIGH, 1); // RF24_PA_MAX is default.
 
     // save on transmission time by setting the radio to only transmit the
     // number of bytes we need to transmit a float
@@ -376,6 +389,7 @@ void setup()
     // }
 
     DAISY.StartAudio(MyCallback);
+
     // For debugging info
     // printf_begin();             // needed only once for printing details
     // radio.printDetails();       // (smaller) function that prints raw register values
@@ -394,7 +408,7 @@ void loop()
     // digitalWrite(2, callback_state);
     // digitalWrite(1, payload_state);
 
-    int t0 = micros();
+    // int t0 = micros();
     // digitalWrite(LED_BUILTIN, (overun) ? HIGH : LOW);
     // digitalWrite(LED_BUILTIN, (available_samps <= SAMPS_PER_BUF) ? HIGH : LOW);
     // digitalWrite(LED_BUILTIN, (error_weird) ? HIGH : LOW);
@@ -421,7 +435,7 @@ void loop()
                 payload[i] = int8_t(audio_in_buffer[audio_in_read_idx] * float(INT8_MAX));
                 break;
             }
-            payload[i] = send_counter;
+            // payload[i] = send_counter;
             send_counter++;
             if (send_counter == INT16_MAX)
                 send_counter = 0;
@@ -434,11 +448,11 @@ void loop()
         // unsigned long start_timer = micros();						// start the timer
         bool report = radio.writeFast(&payload, 32); // transmit & save the report
                                                      // unsigned long end_timer = micros();							// end the timer
-        if (report)
-        {
-            digitalWrite(2, led_state);
-            led_state = (led_state == HIGH) ? LOW : HIGH;
-        }
+        // if (report)
+        // {
+        //     digitalWrite(2, led_state);
+        //     led_state = (led_state == HIGH) ? LOW : HIGH;
+        // }
         // if (report)
         // {
         // 	Serial.print(F("Transmission successful! ")); // payload was delivered
@@ -466,7 +480,7 @@ void loop()
 
         if (radio.available(&pipe))
         { // is there a payload? get the pipe number that recieved it
-            digitalWrite(2, led_state);
+            // digitalWrite(2, led_state);
             // if ((t0 - last_read_us) > delay_time_us)
             // {
             // 	digitalWrite(LED_BUILTIN, HIGH);
@@ -475,7 +489,7 @@ void loop()
             // {
             // 	digitalWrite(LED_BUILTIN, LOW);
             // }
-            last_read_us = t0;
+            // last_read_us = t0;
 
             led_state = (led_state == HIGH) ? LOW : HIGH;
             uint8_t bytes = radio.getPayloadSize(); // get the size of the payload
