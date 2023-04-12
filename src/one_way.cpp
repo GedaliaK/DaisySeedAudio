@@ -22,10 +22,10 @@ const uint16_t csn_pin = 8 - 1; // chip select
 const uint16_t ce_pin = 7 - 1;
 
 #define SAMP_RATE AUDIO_SR_48K
-#define SAMP_RATE_HZ 48000.f
+#define SAMP_RATE_HZ 48000.f // at 16k the 250 hz buzz went away
 #define LUT_N 1024
 float LUT[LUT_N];
-
+bool use_synthetic_data = true;
 enum sample_types
 {
     float32 = 0,
@@ -37,12 +37,13 @@ enum sample_types
 // make sure these match
 #define SAMP_TYPE int16_t
 const sample_types samp_type = int16;
-#define SAMPS_PER_PAYLOAD int(32 / sizeof(SAMP_TYPE))
+#define PAYLOAD_BYTES 32
+#define SAMPS_PER_PAYLOAD int(PAYLOAD_BYTES / sizeof(SAMP_TYPE))
 volatile SAMP_TYPE send_counter = 0;
 
 // instantiate an object for the nRF24L01 transceiver
 // RF24 radio(7, 8); // using pin 7 for the CE pin, and pin 8 for the CSN pin
-RF24 radio(ce_pin, csn_pin, int(10e6)); // using pin 7 for the CE pin, and pin 8 for the CSN pin
+RF24 radio(ce_pin, csn_pin, int(5e6)); // using pin 7 for the CE pin, and pin 8 for the CSN pin
 
 // Let these addresses be used for the pair
 uint8_t address[][6] = {"1Node", "2Node"};
@@ -50,7 +51,7 @@ uint8_t address[][6] = {"1Node", "2Node"};
 // an identifying device destination
 
 // Used to control whether this node is sending or receiving
-bool role = false; // true = TX role, false = RX role
+bool role = true; // true = TX role, false = RX role
 
 // to use different addresses on a pair of radios, we need a variable to
 // uniquely identify which address this radio will use to transmit
@@ -63,9 +64,9 @@ bool radioNumber = !role; // 0 uses address[0] to transmit, 1 uses address[1] to
 const float int16_factor = (1.f / 32767.f);
 
 #define SAMPS_PER_BUF 32 // was 32
-#define N_BUFS int(4)
+#define N_BUFS int(8)    // was 4
 #define TOTAL_SAMPS SAMPS_PER_BUF *N_BUFS
-
+#define CRC_LENGTH RF24_CRC_16
 float audio_buffer[TOTAL_SAMPS] = {0};
 SAMP_TYPE payload[SAMPS_PER_PAYLOAD] = {0};
 
@@ -83,7 +84,7 @@ DaisyHardware hw;
 size_t num_channels;
 
 float x, t = 0.f, omega = 2.f * 3.14159f * 440.f, dt = 1.f / 16e3;
-int sine_dx = float(LUT_N) / 16e3 * 363.f;
+int sine_dx = float(LUT_N) / SAMP_RATE_HZ * 363.f;
 int sine_idx = 0;
 volatile bool overun = false;
 bool listening_paused = false;
@@ -166,10 +167,7 @@ void MyCallback(float **in, float **out, size_t size)
             // case float32:
             // 	for (size_t i = 0; i < SAMPS_PER_BUF; i++)
             // 	{
-            // 		// x = 0.75f * LUT[sine_idx]; // increment float payload
-            // 		// sine_idx += sine_dx;
-            // 		// if (sine_idx >= LUT_N)
-            // 		// 	sine_idx %= LUT_N;
+            // 		f
 
             // 		for (size_t chn = 0; chn < num_channels; chn++)
             // 		{
@@ -297,6 +295,8 @@ void setup()
     pinMode(led, OUTPUT);
     pinMode(1, OUTPUT);
     pinMode(2, OUTPUT);
+    pinMode(22, OUTPUT);
+    // digitalWrite(23, HIGH);
     // digitalWrite(1, HIGH);
 
     Serial.begin();
@@ -343,12 +343,13 @@ void setup()
     // Set the PA Level low to try preventing power supply related problems
     // because these examples are likely run with nodes in close proximity to
     // each other.
-    radio.setPALevel(RF24_PA_HIGH, 1); // RF24_PA_MAX is default.
-
+    radio.setPALevel(RF24_PA_MAX, 1); // RF24_PA_MAX is default.
+    // radio.setCRCLength(CRC_LENGTH);
+    // radio.disableCRC();
     // save on transmission time by setting the radio to only transmit the
     // number of bytes we need to transmit a float
-    radio.setPayloadSize(32); // float datatype occupies 4 bytes
-    radio.setDataRate(RF24_1MBPS);
+    radio.setPayloadSize(PAYLOAD_BYTES); // float datatype occupies 4 bytes
+    radio.setDataRate(RF24_2MBPS);
 
     // set the TX address of the RX node into the TX pipe
     radio.openWritingPipe(address[radioNumber]); // always uses pipe 0
@@ -429,7 +430,19 @@ void loop()
                 payload[i] = int32_t(audio_in_buffer[audio_in_read_idx] * float(INT32_MAX));
                 break;
             case int16:
-                payload[i] = int16_t(audio_in_buffer[audio_in_read_idx] * float(INT16_MAX));
+                if (use_synthetic_data)
+                {
+                    x = 0.75f * LUT[sine_idx]; // increment float payload
+                    sine_idx += sine_dx;
+                    if (sine_idx >= LUT_N)
+                        sine_idx %= LUT_N;
+
+                    payload[i] = int16_t(x * float(INT16_MAX));
+                }
+                else
+                {
+                    payload[i] = int16_t(audio_in_buffer[audio_in_read_idx] * float(INT16_MAX));
+                }
                 break;
             case int8:
                 payload[i] = int8_t(audio_in_buffer[audio_in_read_idx] * float(INT8_MAX));
@@ -446,8 +459,8 @@ void loop()
         audio_in_available_samps -= SAMPS_PER_PAYLOAD;
 
         // unsigned long start_timer = micros();						// start the timer
-        bool report = radio.writeFast(&payload, 32); // transmit & save the report
-                                                     // unsigned long end_timer = micros();							// end the timer
+        bool report = radio.writeFast(&payload, PAYLOAD_BYTES); // transmit & save the report
+                                                                // unsigned long end_timer = micros();							// end the timer
         // if (report)
         // {
         //     digitalWrite(2, led_state);
@@ -497,7 +510,7 @@ void loop()
 
             // digitalWrite(1, HIGH);
             payload_state = (payload_state == HIGH) ? LOW : HIGH;
-            radio.read(&payload, 32); // fetch payload from FIFO
+            radio.read(&payload, PAYLOAD_BYTES); // fetch payload from FIFO
             // digitalWrite(1, LOW);
             float amp = 0.7f;
             for (int i = 0; i < SAMPS_PER_PAYLOAD; i++)

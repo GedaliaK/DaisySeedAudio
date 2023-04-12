@@ -5,6 +5,9 @@
         "initializer_list": "cpp",
         "utility": "cpp",
         "chrono": "cpp",
-        "cassert": "cpp"
+        "cassert": "cpp",
+        "unordered_map": "cpp",
+        "string": "cpp",
+        "vector": "cpp"
     }
 }
