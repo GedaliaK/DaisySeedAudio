@@ -20,7 +20,7 @@ const uint8_t miso_pin = 10 - 1;
 const uint8_t sck_pin = 9 - 1;
 const uint16_t csn_pin = 8 - 1; // chip select
 const uint16_t ce_pin = 7 - 1;
-const u_int8_t channel_number = 100;
+const u_int8_t channel_number = 0;
 #define SAMP_RATE AUDIO_SR_48K
 #define SAMP_RATE_HZ 48000.f // at 16k the 250 hz buzz went away
 #define LUT_N 1024
@@ -343,7 +343,7 @@ void setup()
     // Set the PA Level low to try preventing power supply related problems
     // because these examples are likely run with nodes in close proximity to
     // each other.
-    radio.setPALevel(RF24_PA_LOW, 1); // RF24_PA_MAX is default.
+    radio.setPALevel(RF24_PA_MAX, 1); // RF24_PA_MAX is default.
     radio.setChannel(channel_number);
     // radio.setCRCLength(CRC_LENGTH);
     // radio.disableCRC();
